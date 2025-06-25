@@ -9,9 +9,10 @@
 
 set -euo pipefail  # Exit on error, undefined vars, pipe failures
 
-# Default paths
-SYMBOLS_PATH=${SYMBOLS_PATH:-"$(pwd)"}
-WHITELIST_FILE="$SYMBOLS_PATH/.github/scripts/whitelist.symbols"
+# Get script directory and derive paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SYMBOLS_PATH="${SYMBOLS_PATH:-"${SCRIPT_DIR%/.github/scripts}"}"
+WHITELIST_FILE="$SCRIPT_DIR/whitelist.symbols"
 
 # Detect OS and set library path accordingly
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
@@ -124,7 +125,7 @@ echo "Extracting symbols from library..."
 if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
     # Windows: Use dumpbin to extract exports, fallback to objdump
     if command -v dumpbin >/dev/null 2>&1; then
-        dumpbin //EXPORTS "$LIB_PATH" | awk '/^[[:space:]]*[0-9]+[[:space:]]+[0-9A-Fa-f]+[[:space:]]+[0-9A-Fa-f]+[[:space:]]+/ {print $4}' | grep -E "^WasmEdge" | sort > "$TEMP_DIR/extracted.symbols"
+        dumpbin /EXPORTS "$LIB_PATH" | awk '/^[[:space:]]*[0-9]+[[:space:]]+[0-9A-Fa-f]+[[:space:]]+[0-9A-Fa-f]+[[:space:]]+/ {print $4}' | grep -E "^WasmEdge" | sort > "$TEMP_DIR/extracted.symbols"
     elif command -v objdump >/dev/null 2>&1; then
         echo "dumpbin not found, using objdump as fallback..."
         objdump -p "$LIB_PATH" | grep -E "^\s*\[[[:space:]]*[0-9]+\]" | grep "WasmEdge" | awk '{print $NF}' | sort > "$TEMP_DIR/extracted.symbols"
@@ -185,17 +186,12 @@ fi
 # Sort whitelist for comparison and convert line endings
 sort "$WHITELIST_FILE" | tr -d '\r' > "$TEMP_DIR/whitelist_sorted.symbols"
 
-# Check for unexpected symbols (in library but not in whitelist) - portable approach
-# Create functions to replace comm command for Windows compatibility
-{
-    sort "$TEMP_DIR/extracted.symbols" > "$TEMP_DIR/extracted_sorted.symbols"
-    
-    # Find symbols in extracted but not in whitelist (unexpected)
-    grep -Fxv -f "$TEMP_DIR/whitelist_sorted.symbols" "$TEMP_DIR/extracted_sorted.symbols" > "$TEMP_DIR/unexpected.symbols" 2>/dev/null || true
-    
-    # Find symbols in whitelist but not in extracted (missing)
-    grep -Fxv -f "$TEMP_DIR/extracted_sorted.symbols" "$TEMP_DIR/whitelist_sorted.symbols" > "$TEMP_DIR/missing.symbols" 2>/dev/null || true
-}
+# Note: extracted.symbols is already sorted during symbol extraction
+# Find symbols in extracted but not in whitelist (unexpected)
+grep -Fxv -f "$TEMP_DIR/whitelist_sorted.symbols" "$TEMP_DIR/extracted.symbols" > "$TEMP_DIR/unexpected.symbols" 2>/dev/null || true
+
+# Find symbols in whitelist but not in extracted (missing)
+grep -Fxv -f "$TEMP_DIR/extracted.symbols" "$TEMP_DIR/whitelist_sorted.symbols" > "$TEMP_DIR/missing.symbols" 2>/dev/null || true
 
 # Report results
 EXTRACTED_COUNT=$(wc -l < "$TEMP_DIR/extracted.symbols")
